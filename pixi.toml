@@ -1,0 +1,24 @@
+[workspace]
+channels = ["https://prefix.dev/robostack-jazzy", "conda-forge"]
+name = "arm_sim"
+platforms = ["osx-arm64"]
+version = "0.1.0"
+
+[tasks]
+# ROS 2 workspace
+build = { cmd = "colcon build --symlink-install --cmake-args -G Ninja", cwd = "ros2_ws" }
+clean = { cmd = "rm -rf build install log", cwd = "ros2_ws" }
+# Run the first C++ node; in a second terminal: pixi run echo-joints
+fake-arm = { cmd = "bash -c 'source install/setup.bash && ros2 run arm_sim_cpp fake_arm_node'", cwd = "ros2_ws", depends-on = ["build"] }
+echo-joints = { cmd = "bash -c 'source install/setup.bash && ros2 topic echo /joint_states'", cwd = "ros2_ws" }
+hz-joints = { cmd = "bash -c 'source install/setup.bash && ros2 topic hz /joint_states'", cwd = "ros2_ws" }
+
+[dependencies]
+python = "3.12.*"
+ros-jazzy-desktop = ">=0.11.0,<0.12"
+ros-dev-tools = ">=1.0.3,<2"
+compilers = ">=2.0.0,<3"
+cmake = ">=4.4.3,<5"
+ninja = ">=1.13.2,<2"
+pkg-config = ">=0.29.2,<0.30"
+colcon-common-extensions = ">=0.3.0,<0.4"

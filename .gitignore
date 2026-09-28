@@ -1,0 +1,18 @@
+# pixi
+.pixi/
+*.egg-info
+
+# colcon
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# data / outputs
+data/
+outputs/
+*.mp4
