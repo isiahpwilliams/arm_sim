@@ -3,11 +3,14 @@
 [workspace]
 channels = ["https://prefix.dev/robostack-jazzy", "conda-forge"]
 name = "arm_sim"
-platforms = ["osx-arm64"]
+platforms = ["osx-arm64", "linux-64"]
 version = "0.1.0"
 
 [dependencies]
 python = "3.12.*"
+
+[feature.ros]
+platforms = ["osx-arm64"]
 
 [feature.ros.dependencies]
 ros-jazzy-desktop = ">=0.11.0,<0.12"
@@ -24,6 +27,9 @@ clean = { cmd = "rm -rf build install log", cwd = "ros2_ws" }
 fake-arm = { cmd = "bash -c 'source install/setup.bash && ros2 run arm_sim_cpp fake_arm_node'", cwd = "ros2_ws", depends-on = ["build"] }
 echo-joints = { cmd = "bash -c 'source install/setup.bash && ros2 topic echo /joint_states'", cwd = "ros2_ws" }
 hz-joints = { cmd = "bash -c 'source install/setup.bash && ros2 topic hz /joint_states'", cwd = "ros2_ws" }
+
+[feature.sim]
+platforms = ["osx-arm64"]
 
 [feature.sim.dependencies]
 mujoco = ">=3.13.0,<4"
@@ -48,6 +54,8 @@ imageio = { version = ">=2.38", extras = ["ffmpeg"] }
 
 [feature.train.tasks]
 to-lerobot = { cmd = "python sim/to_lerobot.py" }
+eval = { cmd = "python sim/eval_policy.py" }
+check-predictions = { cmd = "python sim/check_predictions.py" }
 
 [environments]
 default = { features = ["ros", "sim"], solve-group = "default" }

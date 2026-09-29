@@ -50,7 +50,14 @@ pixi run collect -- --episodes 200 --out data/raw           # record expert demo
 pixi run replay -- data/raw/episode_000000                  # re-run an episode's actions, check it reproduces
 
 pixi run -e train to-lerobot -- --raw data/raw --out data/lerobot/panda_stack   # LeRobot v3 dataset
+pixi run -e train eval -- outputs/train/act/checkpoints/last/pretrained_model --seeds 20 --video outputs/eval.mp4
+pixi run -e train eval -- <ckpt> --pair cube_green,cube_blue --temporal-ensemble 0.01   # single-task ACT
+pixi run -e train check-predictions -- <ckpt> --episodes 2 9 19    # offline action error on training frames
 ```
+
+Training uses LeRobot's own CLI, `lerobot-train`, inside the train env. The exact
+invocations that work are in `cloud/train_act.sh` and `cloud/train_smolvla.sh`; on the
+Mac swap `--policy.device=cuda` for `mps` and use a small batch.
 
 ## Layout
 
@@ -70,8 +77,12 @@ sim/
   collect_episodes.py   record demos to data/raw/episode_XXXXXX (meta.json, steps.npz, <cam>.mp4)
   replay_episode.py     open-loop replay of a recorded episode; asserts reproducibility
   to_lerobot.py         convert data/raw -> LeRobot v3 dataset (train env)
+  eval_policy.py        closed-loop evaluation of a LeRobot checkpoint in the sim (train env)
+  check_predictions.py  offline predicted-vs-recorded action error for a checkpoint (train env)
+cloud/                  scripts for a rented Linux GPU box: setup, train ACT / SmolVLA, eval
 data/raw/               recorded demonstrations (gitignored)
 data/lerobot/           converted LeRobot datasets (gitignored)
+outputs/train/          checkpoints (gitignored)
   assets/franka_emika_panda/   vendored from mujoco_menagerie (Apache-2.0), see SOURCE.txt
 outputs/                videos and frames (gitignored)
 ```
@@ -124,8 +135,8 @@ PyAV's bundled copy). On the Linux GPU box torchcodec can be set up properly.
 2. **MuJoCo workspace** — done. Panda + table + red/blue/green cubes, three cameras, offscreen MP4.
 3. **Scripted expert + dataset** — done. DiffIK pick-and-place solving "stack X on Y" with
    randomised colours/positions/yaw; episodes recorded with instruction, actions, state, and video.
-4. **Train** — ACT (no language) to validate the pipeline, then SmolVLA on a rented GPU.
-   Evaluate closed-loop success rate in sim, record rollout videos.
+4. **Train** — pipeline verified locally, real runs belong on a rented GPU. See
+   "Training status" below.
 5. **ROS 2 bridge in C++** — MuJoCo sim as rclcpp nodes: camera + joint-state publishers,
    joint-command subscriber; policy runs as a Python node.
 6. **Optional: Isaac Lab port** on a rented GPU for a sim-to-sim transfer demo.
@@ -138,6 +149,43 @@ with colcon, which owns `ros2_ws/build/`. IntelliSense reads the compile databas
 there. The Python interpreter is set to the pixi one so `mujoco`/`torch` resolve.
 If CMake Tools ever says it cannot find `ament_cmake`, it is running outside that
 environment: reload the window, or pick the kit/cmake path it lists above.
+
+## Training status
+
+What has been verified on the Mac (Metal GPU), 198 episodes / 34k frames:
+
+- `lerobot-train` runs for ACT (~3 steps/s at batch 8) and for SmolVLA fine-tuned from
+  `lerobot/smolvla_base` (~2.6 s/step at batch 2).
+- The closed-loop evaluator scores checkpoints and reports success, grasp rate, and final
+  cube distance. The offline checker reports action error on training frames.
+- ACT trained on the 35 green-on-blue episodes for 8k steps (~45 min) predicts joint targets
+  within ~1.4° of the expert on training frames and improves every checkpoint, but
+  closed-loop it hovers above the cube and grasps in 2/10 scenes with 0/10 stacks:
+  compounding error, the usual imitation-learning failure at short training. ACT papers
+  train 50k–100k steps; that is a 30-minute GPU job and a 5-hour Mac job.
+- Multi-task ACT is not expected to work at all: it ignores the instruction, so with six
+  source/target pairs it averages them. Use `--dataset.episodes` to pick one pair for ACT.
+  SmolVLA reads the instruction and is the real target.
+
+Evaluation seeds start at 0; dataset seeds start at 10000. `--pair` restricts evaluation to
+scenes whose sampled task matches, which is needed for single-task ACT.
+
+## Training on a rented GPU
+
+The `train` environment is locked for `linux-64` as well as `osx-arm64`, and on Linux the
+PyPI torch wheel is the CUDA build. On a fresh Ubuntu box with an NVIDIA driver:
+
+```bash
+git clone <this repo> && cd arm_sim
+cloud/setup_gpu_box.sh                 # installs pixi + the train env, prints the GPU
+# copy data/lerobot/panda_stack over (rsync/scp), then:
+cloud/train_act.sh                     # ~52M params, batch 32, 40k steps (add --dataset.episodes for one pair)
+cloud/train_smolvla.sh                 # fine-tune lerobot/smolvla_base, batch 32, 20k steps
+cloud/eval.sh outputs/train/smolvla/checkpoints/last/pretrained_model 50
+```
+
+Sizing: ACT fits any 16 GB card. SmolVLA at batch 32 wants 24 GB (L4, A10, RTX 4090);
+drop to 16 on smaller cards. Evaluation renders MuJoCo headless via EGL.
 
 ## Gotchas
 
