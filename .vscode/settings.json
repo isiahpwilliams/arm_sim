@@ -1,0 +1,23 @@
+{
+    // CMake Tools builds with the pixi toolchain in its own build dir; colcon owns ros2_ws/build.
+    "cmake.sourceDirectory": "${workspaceFolder}/ros2_ws/src/arm_sim_cpp",
+    "cmake.buildDirectory": "${workspaceFolder}/ros2_ws/build-ide/arm_sim_cpp",
+    "cmake.cmakePath": "${workspaceFolder}/.pixi/envs/default/bin/cmake",
+    "cmake.generator": "Ninja",
+    "cmake.configureOnOpen": false,
+    "cmake.environment": {
+        "PATH": "${workspaceFolder}/.pixi/envs/default/bin:${env:PATH}",
+        "CONDA_PREFIX": "${workspaceFolder}/.pixi/envs/default",
+        "CMAKE_PREFIX_PATH": "${workspaceFolder}/.pixi/envs/default",
+        "AMENT_PREFIX_PATH": "${workspaceFolder}/.pixi/envs/default",
+        "ROS_DISTRO": "jazzy"
+    },
+    "cmake.configureSettings": {
+        "CMAKE_C_COMPILER": "${workspaceFolder}/.pixi/envs/default/bin/clang",
+        "CMAKE_CXX_COMPILER": "${workspaceFolder}/.pixi/envs/default/bin/clang++",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_INSTALL_PREFIX": "${workspaceFolder}/ros2_ws/build-ide/install"
+    },
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/ros2_ws/build-ide/arm_sim_cpp/compile_commands.json",
+    "python.defaultInterpreterPath": "${workspaceFolder}/.pixi/envs/default/bin/python"
+}

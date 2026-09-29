@@ -16,3 +16,7 @@ __pycache__/
 data/
 outputs/
 *.mp4
+
+# stray CMake configure dirs (e.g. VS Code CMake Tools pointed at the repo root)
+/build/
+ros2_ws/build-ide/

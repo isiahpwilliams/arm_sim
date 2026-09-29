@@ -1,11 +1,5 @@
-// fake_arm_node: publishes a sine-wave JointState for a 7-DOF Franka Panda.
-//
-// This is the first brick of the sim bridge. Later, the MuJoCo bridge node
-// will replace the sine wave with real joint positions read from mjData.
-//
-// Try it:
-//   ros2 run arm_sim_cpp fake_arm_node
-//   ros2 topic echo /joint_states
+// Publishes a sine-wave JointState for the 7 Panda joints on /joint_states.
+// Placeholder for the MuJoCo bridge node.
 
 #include <chrono>
 #include <cmath>
@@ -24,8 +18,6 @@ public:
   FakeArmNode()
   : Node("fake_arm_node")
   {
-    // Parameters let you change behaviour from the command line without
-    // recompiling, e.g.  --ros-args -p rate_hz:=100.0
     rate_hz_ = declare_parameter<double>("rate_hz", 50.0);
     amplitude_ = declare_parameter<double>("amplitude", 0.5);
 
@@ -52,7 +44,6 @@ private:
     msg.velocity.resize(joint_names_.size());
 
     for (size_t i = 0; i < joint_names_.size(); ++i) {
-      // Give each joint a different phase so the arm visibly "waves".
       const double phase = static_cast<double>(i) * 0.5;
       msg.position[i] = amplitude_ * std::sin(t + phase);
       msg.velocity[i] = amplitude_ * std::cos(t + phase);

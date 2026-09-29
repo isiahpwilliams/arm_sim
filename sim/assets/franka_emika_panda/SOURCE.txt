@@ -1,0 +1,2 @@
+menagerie commit 2cd6b7b (2026-09-28)
+from https://github.com/google-deepmind/mujoco_menagerie/tree/main/franka_emika_panda (Apache-2.0)

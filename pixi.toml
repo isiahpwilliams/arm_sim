@@ -1,20 +1,15 @@
+# default: ROS 2 + C++ + MuJoCo (conda).  train: LeRobot + PyPI torch, no ROS.
+# Separate because LeRobot's torch/numpy pins conflict with the ROS conda builds.
 [workspace]
 channels = ["https://prefix.dev/robostack-jazzy", "conda-forge"]
 name = "arm_sim"
 platforms = ["osx-arm64"]
 version = "0.1.0"
 
-[tasks]
-# ROS 2 workspace
-build = { cmd = "colcon build --symlink-install --cmake-args -G Ninja", cwd = "ros2_ws" }
-clean = { cmd = "rm -rf build install log", cwd = "ros2_ws" }
-# Run the first C++ node; in a second terminal: pixi run echo-joints
-fake-arm = { cmd = "bash -c 'source install/setup.bash && ros2 run arm_sim_cpp fake_arm_node'", cwd = "ros2_ws", depends-on = ["build"] }
-echo-joints = { cmd = "bash -c 'source install/setup.bash && ros2 topic echo /joint_states'", cwd = "ros2_ws" }
-hz-joints = { cmd = "bash -c 'source install/setup.bash && ros2 topic hz /joint_states'", cwd = "ros2_ws" }
-
 [dependencies]
 python = "3.12.*"
+
+[feature.ros.dependencies]
 ros-jazzy-desktop = ">=0.11.0,<0.12"
 ros-dev-tools = ">=1.0.3,<2"
 compilers = ">=2.0.0,<3"
@@ -22,3 +17,38 @@ cmake = ">=4.4.3,<5"
 ninja = ">=1.13.2,<2"
 pkg-config = ">=0.29.2,<0.30"
 colcon-common-extensions = ">=0.3.0,<0.4"
+
+[feature.ros.tasks]
+build = { cmd = "colcon build --symlink-install --cmake-args -G Ninja", cwd = "ros2_ws" }
+clean = { cmd = "rm -rf build install log", cwd = "ros2_ws" }
+fake-arm = { cmd = "bash -c 'source install/setup.bash && ros2 run arm_sim_cpp fake_arm_node'", cwd = "ros2_ws", depends-on = ["build"] }
+echo-joints = { cmd = "bash -c 'source install/setup.bash && ros2 topic echo /joint_states'", cwd = "ros2_ws" }
+hz-joints = { cmd = "bash -c 'source install/setup.bash && ros2 topic hz /joint_states'", cwd = "ros2_ws" }
+
+[feature.sim.dependencies]
+mujoco = ">=3.13.0,<4"
+pytorch = ">=2.12.0,<3"
+numpy = ">=2.5.3,<3"
+imageio = ">=2.38.0,<3"
+imageio-ffmpeg = ">=0.6.0,<0.7"
+pillow = ">=12.3.0,<13"
+
+[feature.sim.tasks]
+env-check = { cmd = "python sim/arm_env.py" }
+record-demo = { cmd = "python sim/record_demo.py" }
+expert = { cmd = "python sim/run_expert.py" }
+collect = { cmd = "python sim/collect_episodes.py" }
+replay = { cmd = "python sim/replay_episode.py" }
+
+# No conda ffmpeg here: it duplicates PyAV's bundled libav and macOS warns about it.
+[feature.train.pypi-dependencies]
+lerobot = { version = ">=0.6.1,<0.7", extras = ["dataset", "smolvla"] }
+mujoco = ">=3.13,<4"
+imageio = { version = ">=2.38", extras = ["ffmpeg"] }
+
+[feature.train.tasks]
+to-lerobot = { cmd = "python sim/to_lerobot.py" }
+
+[environments]
+default = { features = ["ros", "sim"], solve-group = "default" }
+train = { features = ["train"] }
