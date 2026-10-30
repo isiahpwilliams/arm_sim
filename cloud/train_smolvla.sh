@@ -13,6 +13,7 @@ cd "$(dirname "$0")/.."
 pixi run -e train lerobot-train \
   --dataset.repo_id=local/panda_stack --dataset.root="$DATA" \
   --policy.path=lerobot/smolvla_base --policy.device=cuda --policy.push_to_hub=false \
+  --rename_map='{"observation.images.front": "observation.images.camera1", "observation.images.wrist": "observation.images.camera2"}' \
   --output_dir="$OUT" --job_name=smolvla \
   --batch_size=32 --steps="$STEPS" --log_freq=100 --save_freq=2500 --num_workers=8 \
   --wandb.enable=false
