@@ -21,6 +21,10 @@ from tasks import sample_task
 
 MAX_STEPS = 400
 
+# Set by --zero-state: blanks proprioception so a policy trained on the zero-state
+# dataset sees at test time exactly what it saw in training.
+ZERO_STATE = False
+
 
 def load_policy(path: Path, device: str, n_action_steps: int | None = None,
                 temporal_ensemble: float | None = None):
@@ -41,9 +45,11 @@ def load_policy(path: Path, device: str, n_action_steps: int | None = None,
 
 
 def make_batch(obs: dict, frames: dict[str, np.ndarray], instruction: str) -> dict:
+    state = np.concatenate([obs["qpos"], [obs["gripper"]]])
+    if ZERO_STATE:
+        state = np.zeros_like(state)
     batch = {
-        "observation.state": torch.as_tensor(
-            np.concatenate([obs["qpos"], [obs["gripper"]]]), dtype=torch.float32)[None],
+        "observation.state": torch.as_tensor(state, dtype=torch.float32)[None],
         "task": [instruction],
     }
     for cam, img in frames.items():
@@ -83,10 +89,15 @@ def main():
     ap.add_argument("--video-episodes", type=int, default=3)
     ap.add_argument("--n-action-steps", type=int, default=None, help="override how many chunk steps run open-loop")
     ap.add_argument("--temporal-ensemble", type=float, default=None, help="ACT temporal ensembling coeff, e.g. 0.01")
+    ap.add_argument("--zero-state", action="store_true",
+                    help="feed zeros as observation.state (for policies trained on the "
+                         "zero-state dataset, which must not see proprioception at test time)")
     ap.add_argument("--pair", default=None,
                     help="only evaluate scenes whose task is SRC,DST (e.g. cube_red,cube_blue); "
                          "scans seeds upward until --seeds matching scenes have run")
     args = ap.parse_args()
+    global ZERO_STATE
+    ZERO_STATE = args.zero_state
     pair = tuple(args.pair.split(",")) if args.pair else None
 
     policy, pre, post = load_policy(args.checkpoint, args.device, args.n_action_steps, args.temporal_ensemble)
