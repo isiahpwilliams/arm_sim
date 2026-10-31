@@ -5,6 +5,14 @@
 steps.npz holds per-step arrays: action (T,8), qpos/qvel (T,7), gripper, tcp_pos,
 tcp_quat, cube_<name> (privileged), phase, time. Failed episodes are skipped
 unless --keep-failures is passed.
+
+--action-noise sigma turns on DART-style noise injection: the executed joint
+targets are perturbed by N(0, sigma) radians while the *recorded* action stays
+the expert's clean output. Noise only changes which states get visited, so each
+episode sweeps a tube around the nominal trajectory, labelled with the expert's
+recovery. Recording the perturbed action instead would just teach the policy to
+be noisy. The gripper command is left alone: it is effectively binary (0/255)
+and Gaussian noise on it produces meaningless commands.
 """
 from __future__ import annotations
 
@@ -23,8 +31,10 @@ MAX_STEPS = 400
 SETTLE_STEPS = 10
 
 
-def record_episode(env, expert, seed, cameras):
+def record_episode(env, expert, seed, cameras, action_noise=0.0):
     obs = env.reset(seed=seed)
+    # Separate stream so noise does not disturb the scene-sampling sequence.
+    noise_rng = np.random.default_rng(seed + 1_000_000)
     src, dst, instruction = sample_task(np.random.default_rng(seed))
     expert.reset(obs, src, dst)
 
@@ -44,8 +54,13 @@ def record_episode(env, expert, seed, cameras):
         rows["time"].append(obs["time"])
         for c in CUBE_NAMES:
             rows[f"cube_{c}"].append(obs["cubes"][c])
-        obs = env.step(action)
+        executed = action
+        if action_noise > 0.0:
+            executed = action.copy()
+            executed[:7] += action_noise * noise_rng.standard_normal(7)
+        obs = env.step(executed)
         if expert.done:
+            # Settle on the clean action so the final pose is not left jittering.
             for _ in range(SETTLE_STEPS):
                 obs = env.step(action)
             break
@@ -56,6 +71,7 @@ def record_episode(env, expert, seed, cameras):
         "success": success, "length": len(rows["action"]),
         "fps": env.control_hz, "cameras": list(cameras),
         "image_hw": list(frames[cameras[0]][0].shape[:2]),
+        "action_noise": action_noise,
     }
     arrays = {k: np.asarray(v) for k, v in rows.items()}
     return meta, arrays, frames
@@ -80,6 +96,9 @@ def main():
     ap.add_argument("--out", type=Path, default=Path("data/raw"))
     ap.add_argument("--cameras", nargs="+", default=["front", "wrist"])
     ap.add_argument("--keep-failures", action="store_true")
+    ap.add_argument("--action-noise", type=float, default=0.0,
+                    help="sigma in radians of Gaussian noise added to the executed joint "
+                         "targets; recorded actions stay clean (DART-style injection)")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -92,7 +111,8 @@ def main():
     with open(index_path, "a") as index:
         for i in range(args.episodes):
             seed = args.start_seed + i
-            meta, arrays, frames = record_episode(env, expert, seed, args.cameras)
+            meta, arrays, frames = record_episode(env, expert, seed, args.cameras,
+                                                 action_noise=args.action_noise)
             if not meta["success"] and not args.keep_failures:
                 failed += 1
                 print(f"seed {seed:5d}  FAIL  (skipped)  \"{meta['instruction']}\"")
