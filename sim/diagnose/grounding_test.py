@@ -58,6 +58,13 @@ def main() -> None:
             seeds.append(s)
         s += 1
 
+    # Separates "ignores the task label" from "reads it inverted": feed the policy
+    # (dst, src) while still scoring against the true source cube. If aim improves,
+    # the mapping was learned backwards rather than not at all.
+    swap_cond = "--swap-cond" in sys.argv
+    if swap_cond:
+        print("feeding the (src, dst) one-hot SWAPPED; scoring against the true src")
+
     rows = []
     for seed in seeds:
         obs = env.reset(seed=seed)
@@ -69,7 +76,8 @@ def main() -> None:
         for step in range(MAX_STEPS):
             frames = {c: env.render(c) for c in cameras}
             with torch.inference_mode():
-                action = post(policy.select_action(pre(make_batch(obs, frames, instruction, src, dst))))
+                c_src, c_dst = (dst, src) if swap_cond else (src, dst)
+                action = post(policy.select_action(pre(make_batch(obs, frames, instruction, c_src, c_dst))))
             a = action[0].cpu().numpy()
             if close_tcp is None and a[7] < CLOSE_THRESHOLD:
                 # Record before stepping: this is the pose the policy chose to grasp from.

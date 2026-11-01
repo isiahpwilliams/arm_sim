@@ -137,8 +137,9 @@ PyAV's bundled copy). On the Linux GPU box torchcodec can be set up properly.
 3. **Scripted expert + dataset** — done. DiffIK pick-and-place solving "stack X on Y" with
    randomised colours/positions/yaw; episodes recorded with instruction, actions, state, and video.
 4. **Train** — done on a rented A10. Single-task ACT stacks cubes closed-loop
-   (24%); SmolVLA does not (0-8%) because it reads neither its cameras nor its
-   instruction. Diagnosis in "Training status" below.
+   (24%). Multi-task does not: SmolVLA reads neither its cameras nor its
+   instruction (0-8%), and task-conditioned ACT reads its cameras but ignores the
+   task label (2%). Diagnosis in "Training status" below.
 5. **ROS 2 bridge in C++** — MuJoCo sim as rclcpp nodes: camera + joint-state publishers,
    joint-command subscriber; policy runs as a Python node.
 6. **Optional: Isaac Lab port** on a rented GPU for a sim-to-sim transfer demo.
@@ -228,17 +229,48 @@ architecture, same objective, directly comparable, and the better loss was the
 useless policy. Watch closed-loop success and the input-sensitivity measures in
 `sim/diagnose/` instead.
 
-### Conditioning ACT on the task
+### Conditioning ACT on the task: tried, does not work
 
 ACT takes no text input whatsoever — there is no tokenizer anywhere in
 `modeling_act.py` — so on the full 823-episode set its six pairs are six
 behaviours for identical pixels. `to_lerobot.py --task-cond` appends a 6-dim
-one-hot of the (source, destination) pair to `observation.state`, which
-disambiguates without a text encoder. 823 episodes is ~137 per pair, close to
-the 153 the single-task run had, so 24% is the number to beat. The risk is that
-a 6-dim one-hot is trivially easy to read and may absorb the variance that
-distinguishes the behaviours while leaving the reach undertrained; watch the
-scene-swap shift, not the loss.
+one-hot of the (source, destination) pair to `observation.state`, which should
+disambiguate them without a text encoder. 823 episodes is ~137 per pair, close
+to the 153 the working single-task run had, so 24% was the number to beat.
+
+It reaches 1/50. The policy ignores the one-hot almost exactly as SmolVLA
+ignores language:
+
+| at 40k steps / 7.9 epochs | |
+|---|---|
+| scene-swap shift | **8.71°** (single-pair ACT: 8.05°) |
+| changing the source cube in the label | **0.21°** mid-episode, 0.32° at episode start |
+| label fed **swapped** | correct cube 7/16 vs 6/16 normal, gain 0.39 vs 0.42 |
+| correct cube at grasp | 6/16 — chance is 5.33/16 |
+| success | 1/50 |
+
+Vision is not the problem: scene-swap sensitivity matches the working policy and
+*rises* with training (8.10° at 20k → 8.71° at 40k), and with the true images it
+predicts the expert's action to 0.86°. Nor is the mapping learned backwards —
+feeding `(dst, src)` instead of `(src, dst)` changes nothing closed-loop, which
+is what `grounding_test.py --swap-cond` exists to check. The label is simply not
+read, and more steps do not fix it: 20k → 40k moved correct-cube 5/16 → 6/16
+while the loss fell 0.098 → 0.069.
+
+The reason is the same shortcut that defeats SmolVLA, acting on the conditioning
+channel instead of on vision. The label only earns its keep on the minority of
+frames where proprioception does not already determine the action: by
+mid-trajectory `qpos` encodes which cube the arm is heading to, so the one-hot is
+redundant there and load-bearing only in each episode's opening steps. Its
+gradient contribution is swamped, and ignoring it is the lower-loss solution.
+`cond_ablation.py --first 12` measures exactly this, restricting to episode
+openings — the label's influence roughly doubles there and is still ~11% of the
+images'.
+
+So six dims concatenated into a 14-dim state vector is too weak a channel.
+Making conditioning structurally unavoidable (FiLM, cross-attention, or a
+separate conditioning token) is the next thing to try; the cheap alternative is
+to sidestep conditioning entirely, since single-pair ACT already stacks at 24%.
 
 ## Training on a rented GPU
 

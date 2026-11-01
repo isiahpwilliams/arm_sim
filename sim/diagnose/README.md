@@ -19,6 +19,7 @@ lists and episode indices near the top, meant to be edited.
 | `image_ablation.py` | Does it read the cameras? | Holds state and instruction fixed, swaps in another scene's images or grey frames, measures how far the predicted action moves. |
 | `instruction_ablation.py` | Does it read the text? | Holds images and state fixed, varies only the instruction: paraphrase, swapped source cube, reversed pair, blank string. |
 | `cube_probe.py` | Do the pixels even carry the answer? | Trains a small from-scratch conv net to regress cube xy from the front camera. An information ceiling: if the probe succeeds and the policy fails, the policy has a learning problem, not a perception problem. |
+| `cond_ablation.py` | Does a `--task-cond` policy read the (src, dst) one-hot? | The mirror of `instruction_ablation.py` for policies with no language input: holds images and proprioception fixed, varies only the 6 conditioning dims. `--first N` restricts to each episode's opening frames, where the label is load-bearing; sampling whole episodes understates it, because by mid-trajectory `qpos` already encodes which cube the arm is heading to. |
 | `gripper_trace.py` | Is the gripper command sane? | Prints min command, first step below the closing threshold, and how long it stays closed. Written to check whether temporal ensembling smears the binary open/closed command (it does not — the effect is lag). |
 | `check_img_pipeline.py`, `raw_vs_codec.py` | Do training and eval images match? | Compares dataset frames against freshly rendered ones, and raw renders against video-codec round-trips. |
 
@@ -34,14 +35,19 @@ Every measure needs a scale and a positive control, or it means nothing.
 
 Reference values measured on this dataset (823 episodes, A10):
 
-| | SmolVLA multi-task | SmolVLA single-pair | ACT single-pair |
-|---|---|---|---|
-| scene-swap shift | 0.78° | 0.95° | **8.05°** |
-| instruction-swap shift | 0.29° | 0.54° | n/a (no text input) |
-| grounding slope x / y | 0.13 / 0.53 | 0.69 / 0.85 | **1.03 / 1.11** |
-| mean aim error | 13.3 cm | 5.6 cm | **2.4 cm** |
-| correct cube at close | 8/16 | 15/16 | **16/16** |
-| success | 0/50 | 4/50 | **12/50** |
+| | SmolVLA multi-task | SmolVLA single-pair | ACT single-pair | ACT task-conditioned |
+|---|---|---|---|---|
+| episodes | 198, 6 pairs | 153, 1 pair | 153, 1 pair | 823, 6 pairs |
+| scene-swap shift | 0.78° | 0.95° | **8.05°** | **8.71°** |
+| task-swap shift | 0.29° (text) | 0.54° (text) | n/a (no conditioning) | 0.21° (one-hot) |
+| grounding slope x / y | 0.13 / 0.53 | 0.69 / 0.85 | **1.03 / 1.11** | 0.42 / 0.42 |
+| mean aim error | 13.3 cm | 5.6 cm | **2.4 cm** | — |
+| correct cube at close | 8/16 | 15/16 | **16/16** | 6/16 (chance) |
+| success | 0/50 | 4/50 | **12/50** | 1/50 |
+
+The last column is the useful contrast: strong vision, dead conditioning. Any
+measure of "does it use its inputs" has to name *which* input, because these two
+failures are independent and a policy can have one without the other.
 
 `cube_probe.py` reaches 3.5 cm validation error against a 15.4 cm
 predict-the-mean baseline, with depth (2.2 cm) and lateral (2.3 cm) equally
