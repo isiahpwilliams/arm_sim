@@ -96,6 +96,10 @@ def main():
     ap.add_argument("--out", type=Path, default=Path("data/raw"))
     ap.add_argument("--cameras", nargs="+", default=["front", "wrist"])
     ap.add_argument("--keep-failures", action="store_true")
+    ap.add_argument("--pair", default=None, metavar="SRC,DST",
+                    help="record only scenes whose sampled task is this pair, e.g. "
+                         "cube_green,cube_blue. Seeds that sample a different pair are "
+                         "skipped without rendering, so --episodes still counts attempts.")
     ap.add_argument("--action-noise", type=float, default=0.0,
                     help="sigma in radians of Gaussian noise added to the executed joint "
                          "targets; recorded actions stay clean (DART-style injection)")
@@ -107,15 +111,25 @@ def main():
     index_path = args.out / "index.jsonl"
     existing = sum(1 for _ in open(index_path)) if index_path.exists() else 0
 
-    kept = failed = 0
+    pair = tuple(args.pair.split(",")) if args.pair else None
+    if pair is not None:
+        print(f"recording only {pair[0]} -> {pair[1]}")
+
+    kept = failed = skipped = 0
     with open(index_path, "a") as index:
-        for i in range(args.episodes):
-            seed = args.start_seed + i
+        seed, attempted = args.start_seed, 0
+        while attempted < args.episodes:
+            if pair is not None and sample_task(np.random.default_rng(seed))[:2] != pair:
+                seed += 1
+                skipped += 1
+                continue
+            attempted += 1
             meta, arrays, frames = record_episode(env, expert, seed, args.cameras,
                                                  action_noise=args.action_noise)
             if not meta["success"] and not args.keep_failures:
                 failed += 1
                 print(f"seed {seed:5d}  FAIL  (skipped)  \"{meta['instruction']}\"")
+                seed += 1
                 continue
             ep_id = existing + kept
             meta["episode"] = ep_id
@@ -124,7 +138,9 @@ def main():
             kept += 1
             print(f"seed {seed:5d}  {'OK  ' if meta['success'] else 'FAIL'}  ep {ep_id:5d}  "
                   f"{meta['length']:3d} steps  \"{meta['instruction']}\"")
-    print(f"kept {kept}, failed {failed}, total episodes on disk: {existing + kept}")
+            seed += 1
+    print(f"kept {kept}, failed {failed}, skipped {skipped} off-pair, "
+          f"total episodes on disk: {existing + kept}")
 
 
 if __name__ == "__main__":
