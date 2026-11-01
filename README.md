@@ -50,6 +50,7 @@ pixi run collect -- --episodes 200 --out data/raw           # record expert demo
 pixi run replay -- data/raw/episode_000000                  # re-run an episode's actions, check it reproduces
 
 pixi run -e train to-lerobot -- --raw data/raw --out data/lerobot/panda_stack   # LeRobot v3 dataset
+pixi run -e train to-lerobot -- --raw data/raw --out data/lerobot/panda_stack_cond --task-cond   # + (src,dst) one-hot in the state
 pixi run -e train eval -- outputs/train/act/checkpoints/last/pretrained_model --seeds 20 --video outputs/eval.mp4
 pixi run -e train eval -- <ckpt> --pair cube_green,cube_blue --temporal-ensemble 0.01   # single-task ACT
 pixi run -e train check-predictions -- <ckpt> --episodes 2 9 19    # offline action error on training frames
@@ -135,8 +136,9 @@ PyAV's bundled copy). On the Linux GPU box torchcodec can be set up properly.
 2. **MuJoCo workspace** — done. Panda + table + red/blue/green cubes, three cameras, offscreen MP4.
 3. **Scripted expert + dataset** — done. DiffIK pick-and-place solving "stack X on Y" with
    randomised colours/positions/yaw; episodes recorded with instruction, actions, state, and video.
-4. **Train** — pipeline verified locally, real runs belong on a rented GPU. See
-   "Training status" below.
+4. **Train** — done on a rented A10. Single-task ACT stacks cubes closed-loop
+   (24%); SmolVLA does not (0-8%) because it reads neither its cameras nor its
+   instruction. Diagnosis in "Training status" below.
 5. **ROS 2 bridge in C++** — MuJoCo sim as rclcpp nodes: camera + joint-state publishers,
    joint-command subscriber; policy runs as a Python node.
 6. **Optional: Isaac Lab port** on a rented GPU for a sim-to-sim transfer demo.
@@ -152,23 +154,91 @@ environment: reload the window, or pick the kit/cmake path it lists above.
 
 ## Training status
 
-What has been verified on the Mac (Metal GPU), 198 episodes / 34k frames:
+Throughput on one A10 (24 GB), batch 32: ACT 6.4 step/s, so 40k steps is 1h45m.
+SmolVLA 1.0-1.5 step/s, so 20k steps is 3h40m. ACT is 52M parameters, all
+trainable; SmolVLA fine-tunes 100M of 450M on the frozen recipe. On the Mac
+(Metal) both run but ~20x slower: ACT ~3 step/s at batch 8, SmolVLA ~2.6 s/step
+at batch 2.
 
-- `lerobot-train` runs for ACT (~3 steps/s at batch 8) and for SmolVLA fine-tuned from
-  `lerobot/smolvla_base` (~2.6 s/step at batch 2).
-- The closed-loop evaluator scores checkpoints and reports success, grasp rate, and final
-  cube distance. The offline checker reports action error on training frames.
-- ACT trained on the 35 green-on-blue episodes for 8k steps (~45 min) predicts joint targets
-  within ~1.4° of the expert on training frames and improves every checkpoint, but
-  closed-loop it hovers above the cube and grasps in 2/10 scenes with 0/10 stacks:
-  compounding error, the usual imitation-learning failure at short training. ACT papers
-  train 50k–100k steps; that is a 30-minute GPU job and a 5-hour Mac job.
-- Multi-task ACT is not expected to work at all: it ignores the instruction, so with six
-  source/target pairs it averages them. Use `--dataset.episodes` to pick one pair for ACT.
-  SmolVLA reads the instruction and is the real target.
+### What works, and what does not
 
-Evaluation seeds start at 0; dataset seeds start at 10000. `--pair` restricts evaluation to
-scenes whose sampled task matches, which is needed for single-task ACT.
+| | SmolVLA multi-task | SmolVLA single-pair | ACT single-pair |
+|---|---|---|---|
+| dataset | 198 eps / 34k frames, 6 pairs | 153 eps / 30k frames, 1 pair | 153 eps / 30k frames, 1 pair |
+| steps / epochs | 20k / 18.7 | 20k / 21.0 | 40k / 42.1 |
+| final loss | 0.012 | 0.021 | 0.044 (L1) |
+| scene-swap shift | 0.78° | 0.95° | **8.05°** |
+| instruction-swap shift | 0.29° | 0.54° | n/a (no text input) |
+| grounding slope x / y | 0.13 / 0.53 | 0.69 / 0.85 | **1.03 / 1.11** |
+| mean aim error | 13.3 cm | 5.6 cm | **2.4 cm** |
+| correct cube at close | 8/16 | 15/16 | **16/16** |
+| grasped and lifted | 1/50 | 11/50 | **29/50** |
+| **success** | **0/50** | **4/50** | **12/50 (24%)** |
+
+Single-task ACT stacks cubes. That is the positive control the whole
+investigation needed: the sim, the expert data, absolute joint-target actions at
+20 Hz, 50-step chunks and the two cameras all support closed-loop stacking, so
+anything that fails here fails on its own merits.
+
+SmolVLA reads neither of the inputs it is supposed to read. Swapping in a
+different scene's images moves its predicted action by 0.78°, against ACT's
+8.05° and ~12° of action standard deviation. Changing the instruction to name a
+different source cube moves it 0.29° — *less* than a harmless paraphrase at
+0.42° — and only a blank string moves anything at 1.15°, which is a reaction to
+token count, not to meaning. Its aim collapses to the centroid of the spawn
+region: 13.7 cm from the TCP to the spawn centre against 13.3 cm to the cube it
+was told to pick.
+
+Both failures are real and they compound. Remove the ambiguity by training on
+one pair and grounding partly recovers (13.3 cm → 5.6 cm aim, 8/16 → 15/16
+correct cube, 0/50 → 4/50), so the broken language binding was doing real damage
+on the multi-task set. But a vision pathway still ~8x less sensitive than ACT's
+caps the single-task case at 4/50 against ACT's 12/50 on the same 153 episodes.
+
+**Caveat on the multi-task column.** That run used 198 episodes across 6 pairs,
+roughly 33 per pair, where the single-pair runs had 153 for one pair. So the
+multi-task → single-pair improvement is confounded with ~4.6x more data per
+behaviour and the two effects cannot be separated from these two runs alone. The
+evidence that the language binding is broken does not rest on that comparison:
+it comes from the instruction ablation on each checkpoint directly, where naming
+a different cube barely moves the action.
+
+### Ruled out
+
+Undertraining (20k steps, 18-21 epochs, loss flat), the frozen vision encoder
+(unfreezing bought a 31% sensitivity gain that training then spent), DART action
+noise, the camera setup and image pipeline (dataset frames match freshly
+rendered ones), and chunk length — re-planning more often made ACT monotonically
+worse, 24% → 16% → 8% as `--temporal-ensemble` shortened the executed chunk, so
+long open-loop chunks are load-bearing here rather than a liability. The
+proprioceptive-shortcut theory is weakened too: ACT uses the same absolute joint
+targets and the same qpos state and still reaches a grounding slope of 1.03.
+
+`sim/diagnose/cube_probe.py` settles whether the task is possible at all. A 6M
+from-scratch conv net reading only the front camera regresses cube xy to 3.5 cm
+validation error against a 15.4 cm predict-the-mean baseline, depth and lateral
+equally accurate, after 4 minutes of GPU. The pixels carry the cube positions;
+SmolVLA's 13-16 cm is a learning failure, not an information ceiling.
+
+### Do not trust the loss on this task
+
+It ordered the models backwards. Multi-task SmolVLA reached loss 0.012 and
+scored 0/50; the single-pair run reached 0.021 and scored 4/50. Same
+architecture, same objective, directly comparable, and the better loss was the
+useless policy. Watch closed-loop success and the input-sensitivity measures in
+`sim/diagnose/` instead.
+
+### Conditioning ACT on the task
+
+ACT takes no text input whatsoever — there is no tokenizer anywhere in
+`modeling_act.py` — so on the full 823-episode set its six pairs are six
+behaviours for identical pixels. `to_lerobot.py --task-cond` appends a 6-dim
+one-hot of the (source, destination) pair to `observation.state`, which
+disambiguates without a text encoder. 823 episodes is ~137 per pair, close to
+the 153 the single-task run had, so 24% is the number to beat. The risk is that
+a 6-dim one-hot is trivially easy to read and may absorb the variance that
+distinguishes the behaviours while leaving the reach undertrained; watch the
+scene-swap shift, not the loss.
 
 ## Training on a rented GPU
 
@@ -179,10 +249,15 @@ PyPI torch wheel is the CUDA build. On a fresh Ubuntu box with an NVIDIA driver:
 git clone <this repo> && cd arm_sim
 cloud/setup_gpu_box.sh                 # installs pixi + the train env, prints the GPU
 # copy data/lerobot/panda_stack over (rsync/scp), then:
-cloud/train_act.sh                     # ~52M params, batch 32, 40k steps (add --dataset.episodes for one pair)
-cloud/train_smolvla.sh                 # fine-tune lerobot/smolvla_base, batch 32, 20k steps
-cloud/eval.sh outputs/train/smolvla/checkpoints/last/pretrained_model 50
+cloud/train_act.sh                     # ~52M params, batch 32, 40k steps (1h45m on an A10)
+cloud/train_smolvla.sh                 # fine-tune lerobot/smolvla_base, batch 32, 20k steps (3h40m)
+cloud/eval.sh outputs/train/act_gb/checkpoints/040000/pretrained_model 50 --pair cube_green,cube_blue
 ```
+
+ACT has no language input, so give it one pair (`--dataset.episodes`) or a
+task-conditioned dataset (`--task-cond`); multi-task ACT on raw data averages
+the six behaviours. Evaluate single-task checkpoints with `--pair`, or the score
+counts scenes the policy was never taught.
 
 Sizing: ACT fits any 16 GB card. SmolVLA at batch 32 wants 24 GB (L4, A10, RTX 4090);
 drop to 16 on smaller cards. Evaluation renders MuJoCo headless via EGL.
