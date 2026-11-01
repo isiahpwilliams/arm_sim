@@ -17,6 +17,8 @@ import imageio.v2 as imageio
 import numpy as np
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
+from tasks import ONEHOT_NAMES, task_onehot
+
 JOINT_NAMES = [f"panda_joint{i}" for i in range(1, 8)]
 STATE_NAMES = JOINT_NAMES + ["gripper_opening_m"]
 ACTION_NAMES = [f"{j}_target" for j in JOINT_NAMES] + ["gripper_cmd"]
@@ -37,6 +39,9 @@ def main():
     ap.add_argument("--cameras", nargs="+", default=["front", "wrist"])
     ap.add_argument("--limit", type=int, default=None, help="convert only the first N episodes")
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--task-cond", action="store_true",
+                    help="append a 6-dim (src, dst) one-hot to observation.state, so a "
+                         "policy with no language input can still tell the tasks apart")
     args = ap.parse_args()
 
     episodes = sorted(p for p in args.raw.glob("episode_*") if (p / "meta.json").exists())
@@ -53,8 +58,10 @@ def main():
             raise SystemExit(f"{args.out} exists; pass --overwrite to replace it")
         shutil.rmtree(args.out)
 
+    state_names = STATE_NAMES + ONEHOT_NAMES if args.task_cond else STATE_NAMES
     features = {
-        "observation.state": {"dtype": "float32", "shape": (8,), "names": STATE_NAMES},
+        "observation.state": {"dtype": "float32", "shape": (len(state_names),),
+                              "names": state_names},
         "action": {"dtype": "float32", "shape": (8,), "names": ACTION_NAMES},
     }
     for cam in args.cameras:
@@ -76,6 +83,9 @@ def main():
                 raise RuntimeError(f"{ep_dir.name}: {cam}.mp4 has {len(v)} frames, steps has {T}")
 
         state = np.concatenate([steps["qpos"], steps["gripper"][:, None]], axis=1).astype(np.float32)
+        if args.task_cond:
+            onehot = np.tile(task_onehot(meta["src"], meta["dst"]), (len(state), 1))
+            state = np.concatenate([state, onehot], axis=1)
         action = steps["action"].astype(np.float32)
         for t in range(T):
             frame = {

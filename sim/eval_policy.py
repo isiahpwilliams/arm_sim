@@ -17,7 +17,7 @@ from lerobot.configs.policies import PreTrainedConfig
 
 from arm_env import PandaCubeEnv
 from expert import StackingExpert
-from tasks import sample_task
+from tasks import ONEHOT_NAMES, sample_task, task_onehot
 
 MAX_STEPS = 400
 
@@ -25,12 +25,18 @@ MAX_STEPS = 400
 # dataset sees at test time exactly what it saw in training.
 ZERO_STATE = False
 
+# Set by load_policy from the checkpoint's own state width: a policy trained on a
+# --task-cond dataset expects the (src, dst) one-hot appended to observation.state.
+TASK_COND = False
+
 
 def load_policy(path: Path, device: str, n_action_steps: int | None = None,
                 temporal_ensemble: float | None = None):
     """Policy plus its normalisation pipelines (saved beside the weights)."""
     cfg = PreTrainedConfig.from_pretrained(path)
     cfg.device = device
+    global TASK_COND
+    TASK_COND = cfg.input_features["observation.state"].shape[0] == 8 + len(ONEHOT_NAMES)
     if n_action_steps is not None:
         cfg.n_action_steps = n_action_steps
     if temporal_ensemble is not None:      # ACT: re-plan every step, blend overlapping chunks
@@ -44,10 +50,15 @@ def load_policy(path: Path, device: str, n_action_steps: int | None = None,
     return policy, pre, post
 
 
-def make_batch(obs: dict, frames: dict[str, np.ndarray], instruction: str) -> dict:
+def make_batch(obs: dict, frames: dict[str, np.ndarray], instruction: str,
+               src: str | None = None, dst: str | None = None) -> dict:
     state = np.concatenate([obs["qpos"], [obs["gripper"]]])
     if ZERO_STATE:
         state = np.zeros_like(state)
+    if TASK_COND:
+        if src is None or dst is None:
+            raise ValueError("checkpoint was trained with --task-cond: make_batch needs src/dst")
+        state = np.concatenate([state, task_onehot(src, dst)])
     batch = {
         "observation.state": torch.as_tensor(state, dtype=torch.float32)[None],
         "task": [instruction],
@@ -69,7 +80,7 @@ def run_episode(env, checker, policy, pre, post, cameras, seed, writer=None):
         if writer is not None:
             writer.append_data(np.concatenate([frames[c] for c in cameras], axis=1))
         with torch.inference_mode():
-            action = post(policy.select_action(pre(make_batch(obs, frames, instruction))))
+            action = post(policy.select_action(pre(make_batch(obs, frames, instruction, src, dst))))
         obs = env.step(action[0].cpu().numpy())
         max_lift = max(max_lift, float(obs["cubes"][src][2]) - 0.02)
         if checker.success(obs):
