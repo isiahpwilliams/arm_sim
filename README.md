@@ -176,6 +176,12 @@ at batch 2.
 | grasped and lifted | 1/50 | 11/50 | **29/50** |
 | **success** | **0/50** | **4/50** | **12/50 (24%)** |
 
+Success counts at 50 seeds carry a ~6 point standard error, a 95% interval about
+25 points wide, so read that last column as **30% (60/200) at its best checkpoint,
+30k steps**, falling to 22% (44/200) by 40k while the training loss keeps falling.
+`sim/diagnose/README.md` has the arithmetic; use n=200 for any comparison you mean
+to act on, and n=50 only as a smoke test.
+
 Single-task ACT stacks cubes. That is the positive control the whole
 investigation needed: the sim, the expert data, absolute joint-target actions at
 20 Hz, 50-step chunks and the two cameras all support closed-loop stacking, so
