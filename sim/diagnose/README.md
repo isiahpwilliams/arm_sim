@@ -53,6 +53,25 @@ failures are independent and a policy can have one without the other.
 predict-the-mean baseline, with depth (2.2 cm) and lateral (2.3 cm) equally
 accurate. The cameras carry the cube positions.
 
+## How many seeds an eval needs
+
+`eval_policy.py` is deterministic: the same checkpoint on the same seeds returns
+the same count (040000 gave 10/50 twice). So the spread between evals is pure
+sampling noise, and it is larger than it looks. At n=50 and p around 0.25 the
+binomial standard error is **6 percentage points**, so a 50-seed result carries a
+95% interval about 25 percentage points wide — 12/50 and 8/50 are the same
+measurement. Scoring act_gb's checkpoints at 50 seeds produced 16%, 32%, 20% for
+20k/30k/40k, a "curve" that is mostly noise.
+
+Use **n=200** (standard error ~3 points) for any comparison you intend to act on,
+and treat n=50 as a smoke test. Two 200-seed proportions 8 points apart are still
+only about 1.8 sigma, so a real improvement needs to be large or the sample
+bigger. A 200-seed eval is roughly 30 minutes.
+
+Measured properly, single-pair ACT peaks at **30% (60/200) at 30k steps** and
+falls to **22% (44/200) by 40k**, while training loss keeps falling — the
+checkpoint to beat is 30%, not the 24% an early 50-seed eval suggested.
+
 ## The methodological point
 
 On this task **training loss ordered the models backwards**. Multi-task SmolVLA
